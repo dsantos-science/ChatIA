@@ -1,15 +1,12 @@
 import streamlit as st
-from google.generativeai import configure, GenerativeModel
-import requests
+from google.genai.errors import ClientError as GeminiError
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="ChatIA - Gemini & Ollama",
-    page_icon="🤖",
-    layout="centered"
-)
+from config.settings import get_gemini_api_key, is_gemini_configured
+from core.gemini_client import GeminiClient
+from core.ollama_client import OllamaClient
 
-# Estética Sóbria (Modo Dark)
+st.set_page_config(page_title="ChatIA - Gemini & Ollama", page_icon="🤖", layout="centered")
+
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
@@ -17,67 +14,54 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- MOTORES DE RESPOSTA ---
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
 
-def get_gemini_response(prompt, history):
-    try:
-        configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = GenerativeModel("gemini-2.0-flash")
-        chat = model.start_chat(history=history)
-        response = chat.send_message(prompt)
-        return response.text
-    except Exception as e:
-        return f"❌ Erro Gemini: {str(e)}"
 
-def get_ollama_response(prompt, model_name="tinyllama"):
-    try:
-        url = "http://localhost:11434/api/chat"
-        payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False
-        }
-        response = requests.post(url, json=payload, timeout=90)
-        return response.json().get("message", {}).get("content", "Erro na resposta")
-    except Exception as e:
-        return f"❌ Ollama não disponível: Verifique se o serviço está rodando localmente."
+@st.cache_resource
+def get_gemini_client(model_name: str) -> GeminiClient:
+    return GeminiClient(api_key=get_gemini_api_key(), model_name=model_name)
 
-# --- GERENCIAMENTO DE ESTADO ---
+
+@st.cache_resource
+def get_ollama_client() -> OllamaClient:
+    return OllamaClient()
+
+
+# --- ESTADO ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- BARRA LATERAL (SIDEBAR) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configurações")
-    
-    # Busca a chave nos Secrets do Streamlit
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-    gemini_available = True if api_key else False
-    
+
+    gemini_available = is_gemini_configured()
+
     provider = st.radio(
         "Escolha o Provider:",
         ["ollama", "gemini"],
-        index=1 if gemini_available else 0
+        index=1 if gemini_available else 0,
     )
     st.session_state.provider = provider
-    
+
     st.divider()
-    
+
     if provider == "gemini":
         if gemini_available:
-            st.success("✅ Gemini configurado")
+            selected_model = st.selectbox("Modelo Gemini:", GEMINI_MODELS, key="gemini_model")
+            st.success(f"✅ Gemini configurado ({selected_model})")
         else:
-            st.error("⚠️ Chave Gemini não encontrada!")
+            st.error("⚠️ Chave Gemini não encontrada em .streamlit/secrets.toml")
     else:
-        st.info("🤖 Usando Hardware Local")
-    
+        st.info("🤖 Usando hardware local via Ollama")
+
     st.divider()
-    
+
     if st.button("🗑️ Limpar Conversa"):
         st.session_state.messages = []
         st.rerun()
 
-# --- INTERFACE PRINCIPAL ---
+# --- CHAT ---
 st.title("🤖 Chat IA")
 
 for msg in st.session_state.messages:
@@ -87,24 +71,32 @@ for msg in st.session_state.messages:
 if prompt := st.chat_input("Digite sua mensagem..."):
     with st.chat_message("user"):
         st.markdown(prompt)
-    
+
+    history = st.session_state.messages.copy()
     st.session_state.messages.append({"role": "user", "content": prompt})
-    
+
     with st.chat_message("assistant"):
-        with st.spinner("🤔 Processando..."):
-            try:
-                if st.session_state.provider == "gemini":
-                    history_gemini = []
-                    for m in st.session_state.messages[:-1]:
-                        role = "user" if m["role"] == "user" else "model"
-                        history_gemini.append({"role": role, "parts": [m["content"]]})
-                    
-                    response = get_gemini_response(prompt, history_gemini)
-                else:
-                    response = get_ollama_response(prompt)
-                
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-                
-            except Exception as e:
-                st.error(f"Erro crítico: {str(e)}")
+        try:
+            if st.session_state.provider == "gemini":
+                gemini_model = st.session_state.get("gemini_model", GEMINI_MODELS[0])
+                response = st.write_stream(
+                    get_gemini_client(gemini_model).send_message_stream(prompt, history)
+                )
+            else:
+                response = st.write_stream(get_ollama_client().send_message_stream(prompt, history))
+        except GeminiError as e:
+            if e.code == 429:
+                st.error("⚠️ Limite da API Gemini atingido.")
+                st.info(
+                    "**Possíveis causas:**\n"
+                    "1. Sua API key está no tier gratuito — ative o billing no Google Cloud Console.\n"
+                    "2. A key foi gerada no AI Studio em vez do GCP Console.\n"
+                    "3. Cota diária do free tier esgotada — tente novamente em 24h ou ative billing.\n\n"
+                    "**Para verificar:** acesse https://console.cloud.google.com/billing"
+                )
+            else:
+                st.error(f"❌ Erro na API Gemini (HTTP {e.code}): {e.message}")
+            response = None
+
+    if response is not None:
+        st.session_state.messages.append({"role": "assistant", "content": response})
