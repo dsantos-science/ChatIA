@@ -1,5 +1,5 @@
 # 🏗️ BLUEPRINT DO PROJETO
-> Atualizado em: 2026-04-19 (segurança: 4 camadas de proteção de segredos)
+> Atualizado em: 2026-04-25 (pós-deploy: debug removido, secrets configurados no Streamlit Cloud)
 
 ## 1. Visão Geral
 - **Nome**: ChatIA
@@ -64,6 +64,7 @@ Legenda: ✅ Pronto | 🔨 Em progresso | ⬜ Não iniciado | 🐛 Com bugs
 
 - [x] **Streaming de resposta**: `send_message_stream()` em ambos os clientes; `app.py` usa `st.write_stream()` — texto aparece token a token.
 - [x] **Seleção de modelo Gemini**: `st.selectbox` na sidebar com `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash`; cada modelo tem cliente cacheado separado via `@st.cache_resource(model_name)`.
+- [x] **Deploy no Streamlit Cloud**: app publicado em produção; secrets configurados via painel web do Streamlit Cloud — chaves nunca commitadas.
 - [ ] **Seleção de modelo Ollama**: o modelo `tinyllama` está hardcoded em `OllamaClient`. Expor um `st.selectbox` na sidebar que lista os modelos instalados via `GET /api/tags`.
 - [ ] **System prompt configurável**: sem campo para instrução de sistema (persona, idioma, restrições). Adicionar `st.text_area` na sidebar que injeta como primeira mensagem com `role="system"` no Ollama e como instrução no Gemini.
 - [ ] **Persistência de histórico**: o histórico vive apenas na sessão Streamlit. Considerar salvar em JSON local ou SQLite para retomar conversas.
@@ -112,6 +113,9 @@ Centraliza a leitura da API key: tenta `st.secrets` primeiro (Streamlit), depois
 - **Camada 2 — templates `.example`**: `.env.example` e `secrets.toml.example` vão para o repositório com valores placeholder, documentando o que o novo colaborador precisa preencher sem expor chaves reais.
 - **Camada 3 — pre-commit hook** em `.githooks/pre-commit`: regex detecta padrões de API keys reais (`AIza...`, `sk-...`, `ghp_...`) em todos os arquivos staged e bloqueia o commit antes que o segredo entre no histórico. Ativado via `git config core.hooksPath .githooks`.
 - **Camada 4 — `config/settings.py`**: `get_gemini_api_key()` é a única forma de obter a chave no código. Qualquer módulo que tente hardcodar a chave ficaria redundante — a chave já não é necessária em nenhum outro ponto.
+
+**Deploy no Streamlit Cloud com secrets via painel web**
+A chave `GEMINI_API_KEY` é configurada diretamente no painel *Settings → Secrets* do Streamlit Cloud, nunca commitada no repositório. O `config/settings.py` já tenta `st.secrets` antes de `os.environ`, portanto zero mudança de código foi necessária para o deploy. Chaves nunca commitadas — segurança garantida end-to-end.
 
 **Exceções específicas no Ollama**
 `ConnectionError`, `Timeout` e `Exception` são capturados separadamente para dar mensagens úteis ao usuário em vez de um genérico "algo deu errado".

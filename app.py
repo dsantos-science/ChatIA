@@ -7,8 +7,6 @@ from core.ollama_client import OllamaClient
 
 st.set_page_config(page_title="ChatIA - Gemini & Ollama", page_icon="🤖", layout="centered")
 
-st.write("DEBUG secrets:", list(st.secrets.keys()))
-
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
